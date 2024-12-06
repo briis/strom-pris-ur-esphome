@@ -1,0 +1,397 @@
+substitutions:
+    device: "strom-pris-ur"
+    name: Strøm-Pris Ur
+    ssid: "strom-pris-Ur"
+
+esphome:
+  name: ${device}
+  friendly_name: ${name}
+  name_add_mac_suffix: true
+  project:
+    name: "briis.${device}"
+    version: "1.0.0"
+  includes:
+    - strom-pris-ur.h
+  platformio_options:
+    build_flags: -fexceptions
+    build_unflags: -fno-exceptions
+  on_boot:
+    priority: -100
+    then:
+      - text_sensor.template.publish:
+          id: credits_stromligning
+          state: !lambda 'return "https://stromligning.dk/";'
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: arduino
+    
+
+# Enable logging
+logger:
+
+ota:
+  - platform: esphome
+    password: "7f50b00caf1881338c800e9a0175f7a4"
+
+wifi:
+  ap: {}
+  on_connect:
+    - script.execute:
+        id: get_configuration
+
+web_server:
+  version: 3
+  log: True
+  ota: False
+  sorting_groups:
+    - id: sorting_group_device_settings
+      name: "Indstillinger"
+      sorting_weight: 10
+    - id: sorting_group_location_settings
+      name: "Oplysninger"
+      sorting_weight: 20
+    - id: sorting_group_action
+      name: "Handlinger"
+      sorting_weight: 30
+    - id: sorting_group_credits
+      name: "Tak til"
+      sorting_weight: 40
+  
+captive_portal:
+
+http_request:
+  id: http_request_data
+  verify_ssl: False
+
+time:
+  - platform: sntp
+    id: sntp_time
+    timezone: Europe/Copenhagen
+    servers: 
+      - 77.33.79.202
+      - 213.5.39.34
+      - 162.159.200.123
+    on_time_sync:
+      then:
+        - logger.log: "Uret er synkroniseret"
+    # on_time:
+    #   # Every Minute
+    #   - seconds: 0
+    #     minutes: '*'
+    #     then:
+    #       - script.execute: set_time_date
+
+
+#############################################
+###             BUTTONS                   ###
+#############################################
+
+button:
+  - platform: restart
+    name: "Genstart Enheden"
+    icon: mdi:restart
+    web_server:
+      sorting_weight: 10
+      sorting_group_id: sorting_group_action
+
+  - platform: factory_reset
+    name: Nulstil (!!! Alt bliver nulstillet)
+    icon: mdi:hazard-lights
+    web_server:
+      sorting_weight: 20
+      sorting_group_id: sorting_group_action
+
+  - platform: template
+    name: "Genindlæs indstillinger"
+    icon: mdi:refresh
+    web_server:
+      sorting_weight: 20
+      sorting_group_id: sorting_group_device_settings
+    on_press: 
+      - script.execute: get_configuration      
+
+  - platform: template
+    name: "Opdater priser"
+    icon: mdi:update
+    web_server:
+      sorting_weight: 25
+      sorting_group_id: sorting_group_device_settings
+    on_press: 
+      - script.execute: get_24_hour_prices        
+
+  - platform: template
+    name: Test Script
+    web_server:
+      sorting_weight: 50
+      sorting_group_id: sorting_group_action
+    on_press:
+      - script.execute: test_script
+      # - script.execute: get_24_hour_prices
+      # - logger.log:
+      #     format: "Priser: 0: %s , 23: %s"
+      #     args: ["id(prices)[0].c_str()", "id(prices)[23].c_str()"]
+
+
+#############################################
+###            GLOBALS                    ###
+#############################################
+
+globals:
+  - id: supplier_id
+    type: std::string
+    restore_value: False
+  - id: transporter_id
+    type: std::string
+    restore_value: False
+  - id: report_date
+    type: std::string
+    restore_value: False
+  - id: prices
+    type: std::vector<std::string>
+    restore_value: False
+  - id: priceLowTime
+    type: int
+    restore_value: False
+  - id: priceLow
+    type: double
+    restore_value: False
+  - id: priceHighTime
+    type: int
+    restore_value: False
+  - id: priceHigh
+    type: double
+    restore_value: False
+
+#############################################
+###             NUMBERS                   ###
+#############################################
+# number:
+  # - platform: template
+  #   id: day_brightness
+  #   name: Lystyrke om dagen
+  #   icon: mdi:brightness-5
+  #   unit_of_measurement: "%"
+  #   min_value: 10
+  #   max_value: 80
+  #   step: 1
+  #   optimistic: True
+  #   restore_value: True
+  #   initial_value: 40
+  #   web_server:
+  #     sorting_weight: 10
+  #     sorting_group_id: sorting_group_device_settings
+  # - platform: template
+  #   id: night_brightness
+  #   name: Lystyrke om natten
+  #   icon: mdi:brightness-4
+  #   unit_of_measurement: "%"
+  #   min_value: 10
+  #   max_value: 80
+  #   step: 1
+  #   optimistic: True
+  #   restore_value: True
+  #   initial_value: 20
+  #   web_server:
+  #     sorting_weight: 15
+  #     sorting_group_id: sorting_group_device_settings
+
+#############################################
+###              TEXT SENSOR              ###
+#############################################
+
+text_sensor:
+  - platform: wifi_info
+    mac_address:
+      name: MAC Adresse
+      id: mac_address
+      icon: mdi:information-slab-circle-outline
+      web_server:
+        sorting_weight: 1
+        sorting_group_id: sorting_group_device_settings
+    ip_address:
+      name: IP Adresse
+      id: ip_address
+      icon: mdi:ip-network
+      web_server:
+        sorting_weight: 5
+        sorting_group_id: sorting_group_device_settings
+
+  - platform: template
+    id: day_brightness
+    name: "Lysstyrke dag"
+    icon: mdi:brightness-5
+    update_interval: never
+    filters:
+      - append: "%"
+    web_server:
+      sorting_weight: 10
+      sorting_group_id: sorting_group_device_settings
+  - platform: template
+    id: night_brightness
+    name: "Lysstyrke nat"
+    icon: mdi:brightness-4
+    update_interval: never
+    filters:
+      - append: "%"
+    web_server:
+      sorting_weight: 15
+      sorting_group_id: sorting_group_device_settings
+
+  - platform: template
+    id: price_area
+    name: "Pris område"
+    icon: mdi:map
+    update_interval: never
+    web_server:
+      sorting_weight: 1
+      sorting_group_id: sorting_group_location_settings
+  - platform: template
+    id: transporter
+    name: "Net Transportør"
+    icon: mdi:transmission-tower-import
+    update_interval: never
+    web_server:
+      sorting_weight: 2
+      sorting_group_id: sorting_group_location_settings
+  - platform: template
+    id: supplier
+    name: "El Leverandør"
+    icon: mdi:meter-electric
+    update_interval: never
+    web_server:
+      sorting_weight: 3
+      sorting_group_id: sorting_group_location_settings
+
+  - platform: template
+    name: "Pris data leveret af Strømligning"
+    id: credits_stromligning
+    icon: mdi:domain
+    update_interval: never
+    web_server:
+      sorting_weight: 1
+      sorting_group_id: sorting_group_credits
+
+  - platform: template
+    name: "Aktuel Dato"
+    internal: True
+    id: current_date
+    update_interval: never
+
+#############################################
+###            SCRIPTS                    ###
+#############################################
+script:
+  # Get the Configuration file for the Device
+  - id: get_configuration
+    then:
+      - http_request.get:
+          url: !lambda |-
+            return ((std::string) esphome::to_string("https://strom.briis.com/api/get_configuration/" + id(mac_address).state));
+          capture_response: True
+          headers:
+            Content-Type: application/json
+          max_response_buffer_size: 300
+          on_response:
+            then:
+              - if:
+                  condition:
+                    lambda: return response->status_code == 200;
+                  then:
+                    - lambda: |-
+                        json::parse_json(body, [](JsonObject elem) -> bool {
+                          if (elem["price_area"]) {
+                            std::string price_area_data = elem["price_area"];
+                            std::string supplier_data = elem["supplier_name"];
+                            std::string transporter_data = elem["transporter_name"];
+                            std::string supplier_id_data = elem["supplier"];
+                            std::string transporter_id_data = elem["transporter"];
+                            std::string brightness_day_data = elem["brightness_day"];
+                            std::string brightness_night_data = elem["brightness_night"];
+                            if (supplier_data.c_str() == "Not Found") {
+                              id(price_area).publish_state("Gå til https://strom.briis.com for at konfigurere enheden");
+                            } else {
+                              id(price_area).publish_state(price_area_data.c_str());
+                              id(supplier).publish_state(supplier_data.c_str());
+                              id(supplier_id)= supplier_id_data.c_str();
+                              id(transporter).publish_state(transporter_data.c_str());
+                              id(transporter_id) = transporter_id_data.c_str();
+                              id(day_brightness).publish_state(brightness_day_data.c_str());
+                              id(night_brightness).publish_state(brightness_night_data.c_str());
+                            }
+                          } else {
+                            ESP_LOGD("information","Not valid json data!");
+                          }
+                          return true;
+                        });
+                  else:
+                    - logger.log:
+                        format: "Error: Response status: %d, message %s"
+                        args: ["response->status_code", "body.c_str()"]
+
+  - id: set_report_date
+    then:
+      - lambda: |-
+          std::string reportDate = StromPrisUtils::getReportStart();
+          id(report_date) = reportDate;
+
+  - id: get_24_hour_prices
+    then:
+      - script.execute: set_report_date
+      - http_request.get:
+          url: !lambda |-
+            return ((std::string) esphome::to_string("https://stromligning.dk/api/prices?from=" + id(report_date) + "&productId=" + id(supplier_id) + "&supplierId=" + id(transporter_id)));
+          capture_response: True
+          headers:
+            Content-Type: application/json
+          max_response_buffer_size: 30000
+          on_response:
+            then:
+              - lambda: |-
+                  id(prices).clear();
+              - if:
+                  condition:
+                    lambda: return response->status_code == 200;
+                  then:
+                    - lambda: |-
+                        json::parse_json(body, [](JsonObject elem) -> bool {
+                          if (elem["prices"]) {
+                            JsonArray priceArray = elem["prices"];
+                            int array_size = priceArray.size();
+                            bool tomorrow_valid = array_size > 24;
+                            auto currTime = id(sntp_time).now();
+                            int current_hour = currTime.hour;
+                            for (int i = 0; i < 24; i++) {
+                              int item_hour = StromPrisUtils::extractAndAdjustHour(priceArray[i]["date"].as<const char*>());
+                              if (item_hour < current_hour) {
+                                if (tomorrow_valid) {
+                                  id(prices).push_back(priceArray[i + 24]["price"]["total"].as<std::string>());
+                                } else {
+                                  id(prices).push_back("-1");
+                                }
+                              } else {
+                                id(prices).push_back(priceArray[i]["price"]["total"].as<std::string>());
+                              }
+                            }
+                            std::array<std::string, 2> lowestToday = StromPrisUtils::findLowestValueIndex(id(prices));
+                            std::array<std::string, 2> highestToday = StromPrisUtils::findHighestValueIndex(id(prices));
+                            id(priceLowTime) = std::stoi(lowestToday[0]);
+                            id(priceLow) = std::stod(lowestToday[1]);
+                            id(priceHighTime) = std::stoi(highestToday[0]);
+                            id(priceHigh) = std::stod(highestToday[1]);
+                            ESP_LOGD("information","Strøm priser opdateret");
+                          } else {
+                            ESP_LOGD("information","Not valid json data!");
+                          }
+                          return true;
+                        });
+                  else:
+                    - logger.log:
+                        format: "Error: Response status: %d, message %s"
+                        args: ["response->status_code", "body.c_str()"]
+
+  - id: test_script
+    then:
+      - lambda: |-
+          ESP_LOGD("information","LAV Tid: %d , LAV Pris: %.2f - HØJ Tid: %d , HØJ Pris: %.2f", id(priceLowTime), id(priceLow), id(priceHighTime), id(priceHigh));
