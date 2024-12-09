@@ -5,11 +5,13 @@ public:
     {
         // This will be called by ESPHome when the component is set up
     }
+    static float adjustHour(int hour);
     static std::string datetimeToString(const esphome::ESPTime &datetime);
     static int extractAndAdjustHour(const std::string &dateTime);
     static std::array<std::string, 2> findHighestValueIndex(const std::vector<std::string> &dataPoints);
     static std::array<std::string, 2> findLowestValueIndex(const std::vector<std::string> &dataPoints);
     static std::string getReportStart();
+    static bool isArrayNotEmpty(const std::vector<std::string> &array);
 };
 
 std::string StromPrisUtils::datetimeToString(const esphome::ESPTime &datetime)
@@ -49,6 +51,21 @@ int StromPrisUtils::extractAndAdjustHour(const std::string &dateTime)
 
     return hour;
 }
+float StromPrisUtils::adjustHour(int hour)
+{
+    // Adjust the hour
+    if (hour == 23)
+    {
+        hour = 0;
+    }
+    else
+    {
+        hour += 1;
+    }
+
+    return hour;
+}
+
 std::array<std::string, 2> StromPrisUtils::findLowestValueIndex(const std::vector<std::string> &dataPoints)
 {
     int minIndex = -1;
@@ -69,7 +86,7 @@ std::array<std::string, 2> StromPrisUtils::findLowestValueIndex(const std::vecto
         return {"No valid data", "No valid data"};
     }
 
-    return {std::to_string(minIndex + 1), std::to_string(minValue)};
+    return {std::to_string(minIndex), std::to_string(minValue)};
 }
 
 std::array<std::string, 2> StromPrisUtils::findHighestValueIndex(const std::vector<std::string> &dataPoints)
@@ -95,5 +112,7 @@ std::array<std::string, 2> StromPrisUtils::findHighestValueIndex(const std::vect
     return {std::to_string(maxIndex + 1), std::to_string(maxValue)};
 }
 
-// To convert a string to a int, you can use std::stoi
-// To convert a string to a double, you can use std::stod
+bool StromPrisUtils::isArrayNotEmpty(const std::vector<std::string> &array)
+{
+    return !array.empty();
+}

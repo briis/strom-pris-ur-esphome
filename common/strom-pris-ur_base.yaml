@@ -1,3 +1,7 @@
+substitutions:
+    device: "strom-pris-ur"
+    name: Strøm-Pris Ur
+    ssid: "strom-pris-Ur"
 
 esphome:
   name: ${device}
@@ -8,6 +12,7 @@ esphome:
     version: "1.0.0"
   includes:
     - strom-pris-ur.h
+
   platformio_options:
     build_flags: -fexceptions
     build_unflags: -fno-exceptions
@@ -17,15 +22,24 @@ esphome:
       - text_sensor.template.publish:
           id: credits_stromligning
           state: !lambda 'return "https://stromligning.dk/";'
+      - text_sensor.template.publish:
+          id: priceLowTimeText
+          state: !lambda 'return "";'
+      - text_sensor.template.publish:
+          id: priceHighTimeText
+          state: !lambda 'return "";'
+
 
 esp32:
   board: esp32-s3-devkitc-1
   framework:
     type: arduino
-    
 
 # Enable logging
 logger:
+  level: INFO
+  logs:
+    component: ERROR
 
 ota:
   - platform: esphome
@@ -33,12 +47,23 @@ ota:
 
 wifi:
   ap: {}
+  manual_ip:
+    static_ip: 192.168.1.39
+    gateway: 192.168.1.1
+    subnet: 255.255.255.0
   on_connect:
     - script.execute:
         id: get_configuration
+    - light.turn_on:
+        id: price_led_ring
+        brightness: 20%
+        red: 0.26
+        green: 0.51
+        blue: 1
 
 web_server:
   version: 3
+  id: webserver
   log: True
   ota: False
   sorting_groups:
@@ -54,7 +79,7 @@ web_server:
     - id: sorting_group_credits
       name: "Tak til"
       sorting_weight: 40
-  
+
 captive_portal:
 
 http_request:
@@ -65,20 +90,38 @@ time:
   - platform: sntp
     id: sntp_time
     timezone: Europe/Copenhagen
-    servers: 
+    servers:
       - 77.33.79.202
       - 213.5.39.34
       - 162.159.200.123
-    on_time_sync:
-      then:
-        - logger.log: "Uret er synkroniseret"
-    # on_time:
-    #   # Every Minute
-    #   - seconds: 0
-    #     minutes: '*'
-    #     then:
-    #       - script.execute: set_time_date
+    on_time:
+      - seconds: 0
+        minutes: '*'
+        then:
+          - display.page.show: showtime
+          - component.update: oled_display
+      # Every 15 minutes
+      # - seconds: 0
+      #   minutes: /15
+      #   then:
+      #     - script.execute: get_24_hour_prices
+      # Every Hour
+      - seconds: 0
+        minutes: 0
+        hours: '*'
+        then:
+          - script.execute: get_24_hour_prices
 
+i2c:
+  sda: GPIO08
+  scl: GPIO09
+  scan: true
+  id: bus_a
+
+spi:
+  clk_pin: GPIO12
+  mosi_pin: GPIO11
+  interface: spi3
 
 #############################################
 ###             BUTTONS                   ###
@@ -87,7 +130,7 @@ time:
 button:
   - platform: restart
     name: "Genstart Enheden"
-    icon: mdi:power-cycle
+    icon: mdi:restart
     web_server:
       sorting_weight: 10
       sorting_group_id: sorting_group_action
@@ -105,8 +148,8 @@ button:
     web_server:
       sorting_weight: 20
       sorting_group_id: sorting_group_device_settings
-    on_press: 
-      - script.execute: get_configuration      
+    on_press:
+      - script.execute: get_configuration
 
   - platform: template
     name: "Opdater priser"
@@ -114,21 +157,48 @@ button:
     web_server:
       sorting_weight: 25
       sorting_group_id: sorting_group_device_settings
-    on_press: 
-      - script.execute: get_24_hour_prices        
+    on_press:
+      - script.execute: get_24_hour_prices
+      - delay: 2s
+      - script.execute: update_price_led
 
-  # - platform: template
-  #   name: Test Script
-  #   web_server:
-  #     sorting_weight: 50
-  #     sorting_group_id: sorting_group_action
-  #   on_press:
-  #     - script.execute: test_script
+  - platform: template
+    name: Test Script
+    icon: mdi:script-text-play
+    web_server:
+      sorting_weight: 50
+      sorting_group_id: sorting_group_action
+    on_press:
+      - script.execute: test_script
       # - script.execute: get_24_hour_prices
-      # - logger.log:
-      #     format: "Priser: 0: %s , 23: %s"
-      #     args: ["id(prices)[0].c_str()", "id(prices)[23].c_str()"]
+      # - lambda: |-
+      #     ESP_LOGD("information", "Price Data Loaded: %s", id(price_data_loaded) ? "true" : "false");
 
+#############################################
+###             DISPLAY                   ###
+#############################################
+display:
+  - platform: ssd1351_spi
+    model: "SSD1351 128x128"
+    id: oled_display
+    cs_pin: GPIO10
+    dc_pin: GPIO04
+    reset_pin: GPIO05
+    update_interval: never
+    pages:
+     - id: showtime
+       lambda: |-
+        it.strftime(64, 24, id(font48), color_light_gray, TextAlign::CENTER, "%H:%M", id(sntp_time).now());
+        it.printf(64, 52, id(font12), color_light_gray, TextAlign::CENTER, "Aktuel Pris");
+        it.printf(64, 72, id(font24), color_white, TextAlign::CENTER, "%.2f kr",  ( StromPrisUtils::isArrayNotEmpty(id(prices)) ? std::stod(id(prices)[id(current_hour).state]) : 0.00));
+        it.printf(5, 85, id(font20), color_red, TextAlign::LEFT, "\U000F0B2D");
+        it.printf(28, 85, id(font12), color_white, TextAlign::LEFT, "%s", id(priceHighTimeText).state.c_str());
+        it.printf(28, 98, id(font12), color_white, TextAlign::LEFT, "%.2f", id(priceHigh));
+        it.printf(90, 85, id(font20), color_green, TextAlign::RIGHT, "\U000F0B27");
+        it.printf(123, 85, id(font12), color_white, TextAlign::RIGHT, "%s",  id(priceLowTimeText).state.c_str());
+        it.printf(123, 98, id(font12), color_white, TextAlign::RIGHT, "%.2f", id(priceLow));
+        it.printf(5, 113, id(font10), color_white, TextAlign::LEFT, "MAC:");
+        it.printf(123, 113, id(font10), color_blue, TextAlign::RIGHT, "%s", id(mac_address).state.c_str());
 
 #############################################
 ###            GLOBALS                    ###
@@ -147,23 +217,91 @@ globals:
   - id: prices
     type: std::vector<std::string>
     restore_value: False
-  - id: priceLowTime
-    type: int
-    restore_value: False
   - id: priceLow
     type: double
-    restore_value: False
-  - id: priceHighTime
-    type: int
     restore_value: False
   - id: priceHigh
     type: double
     restore_value: False
+  - id: price_data_loaded
+    type: bool
+    restore_value: False
+    initial_value: "false"
+
+#############################################
+###               LIGHT                   ###
+#############################################
+light:
+  - platform: neopixelbus
+    name: "Pris Ring"
+    icon: mdi:led-strip
+    id: price_led_ring
+    variant: ws2812
+    pin: GPIO14
+    num_leds: 24
+    internal: True
+
+
+#############################################
+###              SENSOR                   ###
+#############################################
+sensor:
+  - platform: template
+    id: current_hour
+    internal: True
+    lambda: |-
+      if (id(sntp_time).now().is_valid()) {
+        float hour = id(sntp_time).now().hour;
+        return hour;
+      } else {
+        return -1;
+      }
+    on_value: 
+      then:
+        - if:
+            condition:
+              - lambda: 'return id(price_data_loaded) != true;'
+            then:
+              - script.execute: get_24_hour_prices
+
+  - platform: template
+    id: day_brightness
+    name: "Lysstyrke dag"
+    icon: mdi:brightness-5
+    update_interval: never
+    filters: 
+      - lambda: return x / 100;
+    web_server:
+      sorting_weight: 10
+      sorting_group_id: sorting_group_device_settings
+  - platform: template
+    id: night_brightness
+    name: "Lysstyrke nat"
+    icon: mdi:brightness-4
+    update_interval: never
+    filters: 
+      - lambda: return x / 100;
+    web_server:
+      sorting_weight: 15
+      sorting_group_id: sorting_group_device_settings
+
+  - platform: bh1750
+    name: "Lyssensor"
+    id: light_sensor
+    address: 0x23
+    update_interval: 60s
+    device_class: illuminance
+    icon: mdi:brightness-7
+    on_value: 
+      then:
+        - script.execute: update_price_led
+    web_server:
+      sorting_weight: 17
+      sorting_group_id: sorting_group_device_settings
 
 #############################################
 ###              TEXT SENSOR              ###
 #############################################
-
 text_sensor:
   - platform: wifi_info
     mac_address:
@@ -180,27 +318,6 @@ text_sensor:
       web_server:
         sorting_weight: 5
         sorting_group_id: sorting_group_device_settings
-
-  - platform: template
-    id: day_brightness
-    name: "Lysstyrke dag"
-    icon: mdi:brightness-5
-    update_interval: never
-    filters:
-      - append: "%"
-    web_server:
-      sorting_weight: 10
-      sorting_group_id: sorting_group_device_settings
-  - platform: template
-    id: night_brightness
-    name: "Lysstyrke nat"
-    icon: mdi:brightness-4
-    update_interval: never
-    filters:
-      - append: "%"
-    web_server:
-      sorting_weight: 15
-      sorting_group_id: sorting_group_device_settings
 
   - platform: template
     id: price_area
@@ -242,6 +359,125 @@ text_sensor:
     id: current_date
     update_interval: never
 
+  - platform: template
+    id: priceLowTimeText
+    name: "Lavest pris tid"
+    internal: True
+    update_interval: never
+    filters: 
+      - lambda: |-
+          if (x == "") {
+            return esphome::optional<std::string>("00");
+          } else {
+            return (std::stoi(x) < 10 ? "0" : "") + x;
+          }
+      - append: ":00"
+  - platform: template
+    id: priceHighTimeText
+    name: "Højeste pris tid"
+    internal: True
+    update_interval: never
+    filters: 
+      - lambda: |-
+          if (x == "") {
+            return esphome::optional<std::string>("00");
+          } else {
+            return (std::stoi(x) < 10 ? "0" : "") + x;
+          }
+      - append: ":00"
+
+#############################################
+###              FONTS                    ###
+#############################################
+font:
+  - file: "gfonts://Roboto"
+    id: font10
+    size: 10
+    glyphs: '!"%()+=,-_.:&°[]0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZÆØÅ abcdefghijklmnopqrstuvwxyzæøå'
+  - file: "gfonts://Roboto"
+    id: font12
+    size: 12
+    glyphs: '!"%()+=,-_.:&°[]0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZÆØÅ abcdefghijklmnopqrstuvwxyzæøå'
+  - file: "gfonts://Roboto"
+    id: font20
+    size: 20
+    glyphs: '!"%()+=,-_.:&°[]0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZÆØÅ abcdefghijklmnopqrstuvwxyzæøå'
+    extras:
+      - file: "fonts/materialdesignicons-webfont.ttf"
+        glyphs: [
+          "\U000F0B27", # mdi:chevron-down-circle-outline
+          "\U000F0B2D", # mdi:chevron-up-circle-outline
+          "\U000F1007", # mdi:piggy-bank
+          "\U000F192D", # mdi:transmission-tower-import
+        ]
+  - file: "gfonts://Roboto"
+    id: font24
+    size: 24
+    glyphs: '!"%()+=,-_.:&°[]0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZÆØÅ abcdefghijklmnopqrstuvwxyzæøå'
+  - file: "gfonts://Roboto"
+    id: font48
+    size: 48
+
+#############################################
+###            COLORS                    ###
+#############################################
+color:
+  - id: color_red
+    red_int: 245
+    green_int: 67
+    blue_int: 54
+    white_int: 0
+  - id: color_amber
+    red_int: 255
+    green_int: 193
+    blue_int: 8
+    white_int: 0
+  - id: color_orange
+    red_int: 255
+    green_int: 152
+    blue_int: 0
+    white_int: 0
+  - id: color_black
+    red_int: 0
+    green_int: 0
+    blue_int: 0
+    white_int: 0
+  - id: color_white
+    red_int: 255
+    green_int: 255
+    blue_int: 255
+    white_int: 0
+  - id: color_green
+    red_int: 76
+    green_int: 175
+    blue_int: 80
+    white_int: 0
+  - id: color_disabled
+    red_int: 189
+    green_int: 189
+    blue_int: 189
+    white_int: 0
+  - id: color_card_back
+    red_int: 36
+    green_int: 36
+    blue_int: 36
+    white_int: 0
+  - id: color_blue
+    red_int: 32
+    green_int: 151
+    blue_int: 243
+    white_int: 0
+  - id: color_light_blue
+    red_int: 0
+    green_int: 168
+    blue_int: 244
+    white_int: 0  
+  - id: color_light_gray
+    red_int: 225
+    green_int: 225
+    blue_int: 225
+    white_int: 0
+
 #############################################
 ###            SCRIPTS                    ###
 #############################################
@@ -280,8 +516,8 @@ script:
                               id(supplier_id)= supplier_id_data.c_str();
                               id(transporter).publish_state(transporter_data.c_str());
                               id(transporter_id) = transporter_id_data.c_str();
-                              id(day_brightness).publish_state(brightness_day_data.c_str());
-                              id(night_brightness).publish_state(brightness_night_data.c_str());
+                              id(day_brightness).publish_state(std::stod(brightness_day_data));
+                              id(night_brightness).publish_state(std::stod(brightness_night_data));
                             }
                           } else {
                             ESP_LOGD("information","Not valid json data!");
@@ -293,12 +529,14 @@ script:
                         format: "Error: Response status: %d, message %s"
                         args: ["response->status_code", "body.c_str()"]
 
+  # Set Price Data Start Date
   - id: set_report_date
     then:
       - lambda: |-
           std::string reportDate = StromPrisUtils::getReportStart();
           id(report_date) = reportDate;
 
+  # GET the Price Array from Strømligning
   - id: get_24_hour_prices
     then:
       - script.execute: set_report_date
@@ -313,6 +551,7 @@ script:
             then:
               - lambda: |-
                   id(prices).clear();
+                  id(price_data_loaded) = false;
               - if:
                   condition:
                     lambda: return response->status_code == 200;
@@ -339,10 +578,11 @@ script:
                             }
                             std::array<std::string, 2> lowestToday = StromPrisUtils::findLowestValueIndex(id(prices));
                             std::array<std::string, 2> highestToday = StromPrisUtils::findHighestValueIndex(id(prices));
-                            id(priceLowTime) = std::stoi(lowestToday[0]);
+                            id(priceLowTimeText).publish_state(lowestToday[0]);
                             id(priceLow) = std::stod(lowestToday[1]);
-                            id(priceHighTime) = std::stoi(highestToday[0]);
+                            id(priceHighTimeText).publish_state(highestToday[0]);
                             id(priceHigh) = std::stod(highestToday[1]);
+                            id(price_data_loaded) = true;
                             ESP_LOGD("information","Strøm priser opdateret");
                           } else {
                             ESP_LOGD("information","Not valid json data!");
@@ -354,7 +594,79 @@ script:
                         format: "Error: Response status: %d, message %s"
                         args: ["response->status_code", "body.c_str()"]
 
+  # Update each LED in the Ring based on Price of Day
+  - id: update_price_led
+    then:
+      if:
+        condition:
+          - light.is_on: price_led_ring
+          - lambda: return StromPrisUtils::isArrayNotEmpty(id(prices));
+        then:
+          - lambda: |-
+              float red = 0;
+              float green = 0;
+              float blue = 0;
+              float brightness = id(day_brightness).state;
+              float brightness_high = id(day_brightness).state + 0.2;
+              if(id(light_sensor).state < 10.0) {
+                brightness = id(night_brightness).state;
+                brightness_high = id(night_brightness).state + 0.2;
+              }
+
+              for (int i = 0; i < 24; i++) {
+                float price = std::stod(id(prices)[i]);
+                if ( price >= 5 ) {
+                  red = 0.61;
+                  green = 0.15;
+                  blue = 0.69;
+                } else if ( price >= 4) {
+                  red = 0.96;
+                  green = 0.26;
+                  blue = 0.21;
+                } else if ( price >= 3) {
+                  red = 1.00;
+                  green = 0.60;
+                  blue = 0.00;
+                } else if ( price >= 2) {
+                  red = 1.00;
+                  green = 0.84;
+                  blue = 0.13;
+                } else if ( price > 0) {
+                  red = 0.30;
+                  green = 0.69;
+                  blue = 0.31;
+                } else {
+                  red = 0.38;
+                  green = 0.49;
+                  blue = 0.55;
+                }
+                id(turn_on_price_led).execute(i, price, red, green, blue, brightness, brightness_high);
+              }
+        else:
+          - logger.log: "Price LED is OFF or no price data. Skipping update"
+
+
+  # Turn on the Specific LED Based On hour of day
+  - id: turn_on_price_led
+    parameters:
+      led_number: float
+      price: float
+      redColor: float
+      greenColor: float
+      blueColor: float
+      brightness: float
+      brightness_high: float
+    then:
+      - light.addressable_set: 
+          id: price_led_ring
+          range_from: !lambda return led_number;
+          range_to: !lambda return led_number;
+          color_brightness: !lambda if (led_number == id(current_hour).state) {return brightness_high;} else {return brightness;}
+          red: !lambda return redColor;
+          green: !lambda return greenColor;
+          blue:  !lambda return blueColor;
+
   - id: test_script
     then:
       - lambda: |-
-          ESP_LOGD("information","LAV Tid: %d , LAV Pris: %.2f - HØJ Tid: %d , HØJ Pris: %.2f", id(priceLowTime), id(priceLow), id(priceHighTime), id(priceHigh));
+          ESP_LOGD("information","LAV Tid: %s , LAV Pris: %.2f", id(priceLowTimeText).state.c_str(), id(priceLow));
